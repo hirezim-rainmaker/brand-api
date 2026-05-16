@@ -34,11 +34,11 @@ def brand_image():
         if raw_w > raw_h:
             raw_img = raw_img.rotate(90, expand=True)
             raw_w, raw_h = raw_img.size
-        logo_w = int(raw_w * 0.28)
-        logo_h = int(logo.height * (logo_w / logo.width))
+        logo_w = int(data.get('logo_width', int(raw_w * 0.20)))
+        logo_h = int(data.get('logo_height', int(logo.height * (logo_w / logo.width))))
         logo = logo.resize((logo_w, logo_h), Image.LANCZOS)
-        pos_x = (raw_w - logo_w) // 2
-        pos_y = int(raw_h * 0.04)
+        pos_x = int(data.get('logo_x', 40))
+        pos_y = int(data.get('logo_y', 40))
         raw_img.paste(logo, (pos_x, pos_y), logo)
         output = io.BytesIO()
         raw_img.convert("RGB").save(output, format="JPEG", quality=95)
