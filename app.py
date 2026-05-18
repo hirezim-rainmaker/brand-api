@@ -10,42 +10,39 @@ import urllib.request
 app = Flask(__name__)
 
 # ─── COLOURS ────────────────────────────────────────────────────────────────
-NAVY        = (13,  27,  64)
-BLUE        = (30,  91, 181)
-WHITE       = (255, 255, 255)
-GREY        = (102, 102, 102)
-LIGHT_BG    = (238, 242, 255)
-STRIP_BLUE  = (30,  91, 181)
+NAVY  = (13,  27,  64)
+BLUE  = (30,  91, 181)
+WHITE = (255, 255, 255)
+GREY  = (102, 102, 102)
 
 # ─── FONTS ──────────────────────────────────────────────────────────────────
 FONT_DIR = "/tmp/fonts"
 os.makedirs(FONT_DIR, exist_ok=True)
-
 FONT_PATHS = {}
 
-def _dl_font(name, url):
-    path = os.path.join(FONT_DIR, name)
-    if not os.path.exists(path):
+def _dl(name, url):
+    p = os.path.join(FONT_DIR, name)
+    if not os.path.exists(p):
         try:
-            urllib.request.urlretrieve(url, path)
+            urllib.request.urlretrieve(url, p)
         except Exception as e:
-            print(f"Font download failed ({name}): {e}")
+            print(f"Font download error ({name}): {e}")
             return None
-    return path
+    return p
 
 def init_fonts():
     base = "https://github.com/JulietaUla/Montserrat/raw/master/fonts/ttf/"
-    FONT_PATHS["bold"]     = _dl_font("Montserrat-Bold.ttf",     base + "Montserrat-Bold.ttf")
-    FONT_PATHS["semibold"] = _dl_font("Montserrat-SemiBold.ttf", base + "Montserrat-SemiBold.ttf")
-    FONT_PATHS["regular"]  = _dl_font("Montserrat-Regular.ttf",  base + "Montserrat-Regular.ttf")
+    FONT_PATHS["bold"]     = _dl("Montserrat-Bold.ttf",     base + "Montserrat-Bold.ttf")
+    FONT_PATHS["semibold"] = _dl("Montserrat-SemiBold.ttf", base + "Montserrat-SemiBold.ttf")
+    FONT_PATHS["regular"]  = _dl("Montserrat-Regular.ttf",  base + "Montserrat-Regular.ttf")
 
 init_fonts()
 
 def font(size, style="regular"):
-    path = FONT_PATHS.get(style) or FONT_PATHS.get("regular")
-    if path:
+    p = FONT_PATHS.get(style) or FONT_PATHS.get("regular")
+    if p:
         try:
-            return ImageFont.truetype(path, size)
+            return ImageFont.truetype(p, size)
         except Exception:
             pass
     return ImageFont.load_default()
@@ -65,213 +62,216 @@ def remove_black_bg(logo):
     bbox = result.getbbox()
     return result.crop(bbox) if bbox else result
 
-def circle_photo(photo, diameter, border=9, color=BLUE):
-    """Crop photo into a circle with a coloured border ring."""
-    photo = photo.convert("RGB")
-    # Scale photo to fill circle
+def composite_circle(base, raw_photo, cx, cy, radius):
+    """
+    Crop raw_photo into a circle and paste it into the base image
+    at the given centre (cx, cy) with the given radius.
+    Works even when the circle extends beyond the canvas edge.
+    """
+    d = radius * 2
+    photo = raw_photo.convert("RGB")
+
+    # Scale photo to fill the circle diameter
     ratio = photo.width / photo.height
-    nw = diameter if ratio <= 1 else int(diameter * ratio)
-    nh = diameter if ratio >= 1 else int(diameter / ratio)
+    if ratio >= 1:
+        nw, nh = int(d * ratio), d
+    else:
+        nw, nh = d, int(d / ratio)
     photo = photo.resize((nw, nh), Image.LANCZOS)
-    left = (nw - diameter) // 2
-    top  = (nh - diameter) // 2
-    photo = photo.crop((left, top, left + diameter, top + diameter))
+
+    # Centre-crop to exactly d×d
+    left = (nw - d) // 2
+    top  = (nh - d) // 2
+    photo = photo.crop((left, top, left + d, top + d))
 
     # Circular mask
-    mask = Image.new("L", (diameter, diameter), 0)
-    ImageDraw.Draw(mask).ellipse([0, 0, diameter - 1, diameter - 1], fill=255)
+    mask = Image.new("L", (d, d), 0)
+    ImageDraw.Draw(mask).ellipse([0, 0, d - 1, d - 1], fill=255)
     photo_rgba = photo.convert("RGBA")
     photo_rgba.putalpha(mask)
 
-    # Bordered ring
-    total = diameter + border * 2
-    ring = Image.new("RGBA", (total, total), (0, 0, 0, 0))
-    ImageDraw.Draw(ring).ellipse([0, 0, total - 1, total - 1], fill=color + (255,))
-    ring.paste(photo_rgba, (border, border), photo_rgba)
-    return ring
+    # Paste (may extend beyond canvas — PIL clips automatically)
+    paste_x = cx - radius
+    paste_y = cy - radius
+    base.paste(photo_rgba, (paste_x, paste_y), photo_rgba)
+    return base
 
-def draw_strip(draw, W, H, strip_h, website, phone):
-    """Blue strip at bottom with website | phone."""
-    y0 = H - strip_h
-    draw.rectangle([0, y0, W, H], fill=STRIP_BLUE)
-    mid = W // 2
-    draw.rectangle([mid - 1, y0 + 18, mid + 1, H - 18], fill=WHITE)
-    f = font(22, "semibold")
-    # Website
-    draw.text((70, y0 + strip_h // 2 - 13), f"\u2022  {website}", fill=WHITE, font=f)
-    # Phone
-    draw.text((mid + 40, y0 + strip_h // 2 - 13), f"\u2022  {phone}", fill=WHITE, font=f)
+def cover(draw, x, y, w, h, color=WHITE):
+    """Paint a solid rectangle to erase existing content."""
+    draw.rectangle([x, y, x + w, y + h], fill=color)
 
-def draw_feature(draw, x, y, label, subtitle, icon_sz=55):
-    """Single feature point: blue circle + bold label + grey subtitle."""
-    draw.ellipse([x, y, x + icon_sz, y + icon_sz], fill=BLUE)
-    draw.text((x + icon_sz + 16, y + 6),  label.upper(),    fill=NAVY, font=font(20, "bold"))
-    draw.text((x + icon_sz + 16, y + 30), subtitle.upper(), fill=GREY, font=font(15, "regular"))
-    return y + icon_sz + 22
-
-def draw_icon_row(draw, W, y0, row_h, labels):
-    """Light-bg band with 4 evenly-spaced icon + label columns."""
-    draw.rectangle([0, y0, W, y0 + row_h], fill=LIGHT_BG)
-    col_w  = W // len(labels)
-    icon_r = 22
-    for i, lbl in enumerate(labels):
-        cx = i * col_w + col_w // 2
-        # Separator
-        if i > 0:
-            draw.rectangle([i * col_w - 1, y0 + 14, i * col_w + 1, y0 + row_h - 14],
-                           fill=(200, 210, 230))
-        # Icon circle (outline only)
-        draw.ellipse([cx - icon_r, y0 + 14, cx + icon_r, y0 + 14 + icon_r * 2],
-                     outline=BLUE, width=2)
-        # Label (may be two lines)
-        lf = font(14, "bold")
-        for j, part in enumerate(lbl.split("\n")):
-            bbox = draw.textbbox((0, 0), part, font=lf)
-            tw = bbox[2] - bbox[0]
-            draw.text((cx - tw // 2, y0 + 14 + icon_r * 2 + 8 + j * 18),
-                      part, fill=NAVY, font=lf)
-
-def heading_block(draw, x, y, word1, word2, big=72):
-    """Two-word heading: word1 in navy, word2 in blue, divider below."""
-    f = font(big, "bold")
-    draw.text((x, y), word1, fill=NAVY, font=f)
-    bb1 = draw.textbbox((x, y), word1, font=f)
-    y2 = bb1[3] + 6
-    draw.text((x, y2), word2, fill=BLUE, font=f)
-    bb2 = draw.textbbox((x, y2), word2, font=f)
-    div_y = bb2[3] + 14
-    draw.rectangle([x, div_y, x + 90, div_y + 4], fill=BLUE)
-    return div_y + 20   # next y after divider
-
-# ─── FIVE TEMPLATE BUILDERS ─────────────────────────────────────────────────
-
-ICON_LABELS = ["WATER\nCONTROL", "HOME\nPROTECTION", "LONG TERM\nSOLUTIONS", "TRUSTED\nEXPERTS"]
-
-def template_3(photo, heading, features, website, phone):
+def write_two_word_heading(draw, x, y, word1, word2, size):
     """
-    Standard: large circle right (half cropped), 3 feature points left,
-    4-icon row, blue strip.  — matches branded Image 3.
+    word1 → dark navy (bold)
+    word2 → blue (bold)
+    Returns the y-coordinate immediately below the heading block.
     """
-    W, H = 1080, 1080
-    canvas = Image.new("RGBA", (W, H), WHITE + (255,))
-    draw   = ImageDraw.Draw(canvas)
+    f = font(size, "bold")
+    draw.text((x, y), word1.upper(), fill=NAVY, font=f)
+    bb1 = draw.textbbox((x, y), word1.upper(), font=f)
+    y2 = bb1[3] + 5
+    draw.text((x, y2), word2.upper(), fill=BLUE, font=f)
+    bb2 = draw.textbbox((x, y2), word2.upper(), font=f)
+    return bb2[3]
 
-    # Circle — centre at right edge so only left half shows
-    d = 780
-    c = circle_photo(photo, d)
-    canvas.paste(c, (W - d // 2 - 9, 30), c)
+def write_feature_left(draw, icon_x, icon_y, label, subtitle, icon_sz=52):
+    """
+    Left-column feature point: blue filled circle + bold label + grey subtitle.
+    Paints white over the existing text area first.
+    """
+    text_x = icon_x + icon_sz + 14
+    cover(draw, text_x, icon_y, 420, icon_sz + 6)
+    draw.text((text_x, icon_y + 6),  label.upper(),    fill=NAVY, font=font(19, "bold"))
+    draw.text((text_x, icon_y + 29), subtitle.upper(), fill=GREY, font=font(14, "regular"))
 
-    # Heading
+def write_feature_centered(draw, cx, y, label, subtitle, col_w=360):
+    """
+    Bottom-centred feature (Template 4 style).
+    """
+    x0 = cx - col_w // 2
+    cover(draw, x0, y + 88, col_w, 70)
+    lf = font(19, "bold")
+    lb = draw.textbbox((0, 0), label.upper(), font=lf)
+    draw.text((cx - (lb[2] - lb[0]) // 2, y + 90),
+              label.upper(), fill=NAVY, font=lf)
+    sf = font(14, "regular")
+    sb = draw.textbbox((0, 0), subtitle, font=sf)
+    draw.text((cx - (sb[2] - sb[0]) // 2, y + 114),
+              subtitle, fill=GREY, font=sf)
+
+
+# ─── TEMPLATE COORDINATE MAP ────────────────────────────────────────────────
+#
+# All images are assumed to be 1080×1080 px.
+#
+# "circle"          → centre (cx,cy) and radius of the photo frame
+# "logo_cover"      → [x, y, w, h] white rectangle to erase the existing logo
+#                     (set to None if no logo in this template)
+# "heading_cover"   → [x, y, w, h] white rectangle to erase the existing heading
+# "heading"         → {x, y, size}  where to write the new heading
+# "subtext_cover"   → [x, y, w, h] erase the tagline / subtext row
+# "features"        → list of feature configs (see write_feature_* above)
+# "feature_style"   → "left" or "bottom"
+# "icon_size"       → icon circle diameter for left-style features
+#
+CONFIGS = {
+    # ── Template 3 — Basement Waterproofing (standard template) ─────────────
+    3: {
+        "circle":        {"cx": 868, "cy": 385, "r": 368},
+        "logo_cover":    [38, 28, 365, 190],
+        "heading_cover": [38, 255, 520, 205],
+        "heading":       {"x": 45, "y": 268, "size": 68},
+        "subtext_cover": [38, 450, 520, 50],
+        "features": [
+            {"icon_x": 45, "icon_y": 495},
+            {"icon_x": 45, "icon_y": 567},
+            {"icon_x": 45, "icon_y": 639},
+        ],
+        "feature_style": "left",
+        "icon_size": 52,
+    },
+
+    # ── Template 4 — Foundation Repair (larger circle, 3 bottom icons) ──────
+    4: {
+        "circle":        {"cx": 900, "cy": 398, "r": 398},
+        "logo_cover":    [38, 24, 365, 188],
+        "heading_cover": [38, 258, 520, 215],
+        "heading":       {"x": 45, "y": 272, "size": 74},
+        "subtext_cover": [38, 466, 520, 52],
+        "features": [
+            {"cx": 180, "icon_y": 758},
+            {"cx": 540, "icon_y": 758},
+            {"cx": 900, "icon_y": 758},
+        ],
+        "feature_style": "bottom",
+        "icon_size": 80,
+    },
+
+    # ── Template 5 — Sump Pump Solutions (heading at top, 3 left features) ──
+    5: {
+        "circle":        {"cx": 868, "cy": 415, "r": 352},
+        "logo_cover":    None,
+        "heading_cover": [38, 32, 520, 215],
+        "heading":       {"x": 45, "y": 45, "size": 70},
+        "subtext_cover": [38, 245, 520, 52],
+        "features": [
+            {"icon_x": 45, "icon_y": 310},
+            {"icon_x": 45, "icon_y": 395},
+            {"icon_x": 45, "icon_y": 480},
+        ],
+        "feature_style": "left",
+        "icon_size": 52,
+    },
+
+    # ── Templates 1 & 2 reuse Template 3 coordinate system ──────────────────
+    1: None,
+    2: None,
+}
+# Map templates 1 and 2 to template 3's config
+CONFIGS[1] = CONFIGS[3]
+CONFIGS[2] = CONFIGS[3]
+
+
+# ─── CORE COMPOSITING FUNCTION ───────────────────────────────────────────────
+
+def apply_template(base_img, raw_photo, heading, features, cfg):
+    """
+    Composite raw_photo into base_img (the branded reference) and
+    overlay dynamic text.  Returns a PIL RGB image.
+
+    features: list of (label, subtitle) tuples — up to 3 items.
+    """
+    base = base_img.convert("RGBA")
+    draw = ImageDraw.Draw(base)
+
+    # 1. Composite photo into the circle
+    c = cfg["circle"]
+    composite_circle(base, raw_photo, c["cx"], c["cy"], c["r"])
+
+    # Re-acquire draw after paste operations
+    draw = ImageDraw.Draw(base)
+
+    # 2. Erase existing logo
+    if cfg.get("logo_cover"):
+        lc = cfg["logo_cover"]
+        cover(draw, lc[0], lc[1], lc[2], lc[3])
+
+    # 3. Erase existing heading and write new one
+    hc = cfg["heading_cover"]
+    cover(draw, hc[0], hc[1], hc[2], hc[3])
     words = heading.upper().split()
-    w1, w2 = (words + [""])[:2]
-    fp_start = heading_block(draw, 50, 220, w1, w2, big=70)
+    w1 = words[0] if len(words) > 0 else "BRAND"
+    w2 = words[1] if len(words) > 1 else "IMAGE"
+    h = cfg["heading"]
+    write_two_word_heading(draw, h["x"], h["y"], w1, w2, h["size"])
 
-    # Feature points
-    y = fp_start + 10
-    for lbl, sub in features[:3]:
-        y = draw_feature(draw, 50, y, lbl, sub)
+    # 4. Erase subtext row
+    sc = cfg["subtext_cover"]
+    cover(draw, sc[0], sc[1], sc[2], sc[3])
 
-    # Icon row
-    draw_icon_row(draw, W, 790, 115, ICON_LABELS)
+    # 5. Write feature points
+    style   = cfg.get("feature_style", "left")
+    icon_sz = cfg.get("icon_size", 52)
+    fp_cfgs = cfg.get("features", [])
 
-    # Strip
-    draw_strip(draw, W, H, 90, website, phone)
+    for i, (label, subtitle) in enumerate(features[:3]):
+        if i >= len(fp_cfgs):
+            break
+        fp = fp_cfgs[i]
 
-    return canvas.convert("RGB")
+        if style == "left":
+            write_feature_left(draw,
+                               fp["icon_x"], fp["icon_y"],
+                               label, subtitle, icon_sz)
+        else:  # bottom-centred (Template 4)
+            write_feature_centered(draw,
+                                   fp["cx"], fp["icon_y"],
+                                   label, subtitle)
 
-
-def template_4(photo, heading, features, website, phone):
-    """
-    Foundation-repair style: large circle right, minimal left content,
-    3 icons centred near bottom (no 4-icon row).  — matches branded Image 4.
-    """
-    W, H = 1080, 1080
-    canvas = Image.new("RGBA", (W, H), WHITE + (255,))
-    draw   = ImageDraw.Draw(canvas)
-
-    d = 840
-    c = circle_photo(photo, d)
-    canvas.paste(c, (W - d // 2 - 9, 20), c)
-
-    words = heading.upper().split()
-    w1, w2 = (words + [""])[:2]
-    fp_start = heading_block(draw, 50, 250, w1, w2, big=76)
-
-    # 3 icons centred near bottom
-    icon_y = 760
-    icon_sz = 80
-    col_w = W // 3
-    for i, (lbl, sub) in enumerate(features[:3]):
-        cx = i * col_w + col_w // 2
-        if i > 0:
-            draw.rectangle([i * col_w - 1, icon_y, i * col_w + 1, icon_y + 180],
-                           fill=(200, 210, 230))
-        draw.ellipse([cx - icon_sz // 2, icon_y,
-                      cx + icon_sz // 2, icon_y + icon_sz], fill=BLUE)
-        lf = font(20, "bold")
-        bb = draw.textbbox((0, 0), lbl.upper(), font=lf)
-        draw.text((cx - (bb[2]-bb[0])//2, icon_y + icon_sz + 12),
-                  lbl.upper(), fill=NAVY, font=lf)
-        sf = font(15, "regular")
-        bb2 = draw.textbbox((0, 0), sub, font=sf)
-        draw.text((cx - (bb2[2]-bb2[0])//2, icon_y + icon_sz + 38),
-                  sub, fill=GREY, font=sf)
-
-    draw_strip(draw, W, H, 90, website, phone)
-    return canvas.convert("RGB")
+    return base.convert("RGB")
 
 
-def template_5(photo, heading, features, website, phone):
-    """
-    Sump-pump style: circle right, 4 feature points with light icon circles,
-    no icon row.  — matches branded Image 5.
-    """
-    W, H = 1080, 1080
-    canvas = Image.new("RGBA", (W, H), WHITE + (255,))
-    draw   = ImageDraw.Draw(canvas)
-
-    d = 720
-    c = circle_photo(photo, d)
-    canvas.paste(c, (W - d // 2 - 9, 40), c)
-
-    words = heading.upper().split()
-    w1, w2 = (words + [""])[:2]
-    y = heading_block(draw, 50, 200, w1, w2, big=68)
-
-    # 4 feature points with light-bg circles
-    fp_all = (features * 2)[:4]
-    icon_sz = 52
-    for lbl, sub in fp_all:
-        draw.rectangle([50, y - 8, 500, y - 7], fill=(220, 225, 240))  # separator
-        draw.ellipse([50, y, 50 + icon_sz, y + icon_sz],
-                     fill=(235, 240, 255), outline=BLUE, width=2)
-        draw.text((118, y + 6),  lbl.upper(), fill=BLUE, font=font(18, "bold"))
-        draw.text((118, y + 28), sub,         fill=GREY, font=font(14, "regular"))
-        y += icon_sz + 20
-
-    draw_strip(draw, W, H, 90, website, phone)
-    return canvas.convert("RGB")
-
-
-def template_1(photo, heading, features, website, phone):
-    """
-    Infographic style (Image 1): uses template_3 layout as base —
-    consistent brand output across all templates.
-    """
-    return template_3(photo, heading, features, website, phone)
-
-
-def template_2(photo, heading, features, website, phone):
-    """
-    Services-grid style (Image 2): uses template_3 layout as base.
-    """
-    return template_3(photo, heading, features, website, phone)
-
-
-BUILDERS = {1: template_1, 2: template_2, 3: template_3,
-            4: template_4, 5: template_5}
-
-# ─── ROUTES ─────────────────────────────────────────────────────────────────
+# ─── ROUTES ──────────────────────────────────────────────────────────────────
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -280,15 +280,20 @@ def health():
 
 @app.route('/brand', methods=['POST'])
 def brand_image():
-    """Existing logo-placement endpoint — unchanged."""
+    """
+    Existing logo-placement endpoint — unchanged.
+    Accepts: raw_url, logo_url, logo_x, logo_y, logo_width
+    """
     try:
         data    = request.get_json()
-        raw_img = ImageOps.exif_transpose(download_image(data['raw_url'])).convert("RGBA")
-        logo    = remove_black_bg(download_image(data['logo_url']))
+        raw_img = ImageOps.exif_transpose(
+            download_image(data['raw_url'])
+        ).convert("RGBA")
+        logo = remove_black_bg(download_image(data['logo_url']))
 
         raw_w, raw_h = raw_img.size
         if raw_w > raw_h:
-            raw_img = raw_img.rotate(90, expand=True)
+            raw_img  = raw_img.rotate(90, expand=True)
             raw_w, raw_h = raw_img.size
 
         logo_w = int(data.get('logo_width',  int(raw_w * 0.20)))
@@ -301,30 +306,35 @@ def brand_image():
 
         out = io.BytesIO()
         raw_img.convert("RGB").save(out, format="JPEG", quality=95)
-        return jsonify({"success": True,
-                        "branded_image": base64.b64encode(out.getvalue()).decode()})
+        return jsonify({
+            "success": True,
+            "branded_image": base64.b64encode(out.getvalue()).decode()
+        })
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
 
 @app.route('/template', methods=['POST'])
-def apply_template():
+def template_endpoint():
     """
-    New endpoint: full branded template compositing.
+    Branded template compositing endpoint.
+
+    Uses the actual branded reference image as the base — preserving
+    all real brand design — then composites the raw photo into the
+    circular frame and overlays dynamic text.
 
     Expected JSON body:
     {
-        "raw_url":           "https://...",   // raw photo URL
-        "template_id":       3,               // 1-5
+        "raw_url":           "https://...",   // raw photo (Google Drive direct link)
+        "template_url":      "https://...",   // branded reference image (Google Drive)
+        "template_id":       3,               // 1-5  (selects coordinate config)
         "heading":           "CLEAN SPACE",   // exactly 2 words
         "feature_1_label":   "STOP MOISTURE",
         "feature_1_subtitle":"Keep crawlspace dry",
         "feature_2_label":   "PROTECT HOME",
         "feature_2_subtitle":"Prevent costly damage",
         "feature_3_label":   "BUILT TO LAST",
-        "feature_3_subtitle":"Reliable solutions",
-        "website":           "www.sundahlwaterproofing.com",
-        "phone":             "(914) 834-9212"
+        "feature_3_subtitle":"Reliable solutions"
     }
 
     Returns:
@@ -333,15 +343,22 @@ def apply_template():
     try:
         data = request.get_json()
 
-        raw = ImageOps.exif_transpose(
+        raw   = ImageOps.exif_transpose(
             download_image(data['raw_url'])
         ).convert("RGBA")
 
-        template_id = int(data.get('template_id', 3))
-        heading     = data.get('heading', 'BRAND IMAGE')
-        website     = data.get('website', 'www.example.com')
-        phone       = data.get('phone',   '(000) 000-0000')
+        base  = ImageOps.exif_transpose(
+            download_image(data['template_url'])
+        ).convert("RGBA")
 
+        # Resize base to 1080×1080 if needed
+        if base.size != (1080, 1080):
+            base = base.resize((1080, 1080), Image.LANCZOS)
+
+        template_id = int(data.get('template_id', 3))
+        cfg         = CONFIGS.get(template_id, CONFIGS[3])
+
+        heading  = data.get('heading', 'BRAND IMAGE')
         features = [
             (data.get('feature_1_label', 'FEATURE ONE'),
              data.get('feature_1_subtitle', '')),
@@ -351,13 +368,15 @@ def apply_template():
              data.get('feature_3_subtitle', '')),
         ]
 
-        builder = BUILDERS.get(template_id, template_3)
-        result  = builder(raw, heading, features, website, phone)
+        result = apply_template(base, raw, heading, features, cfg)
 
         out = io.BytesIO()
         result.save(out, format="JPEG", quality=95)
-        return jsonify({"success": True,
-                        "branded_image": base64.b64encode(out.getvalue()).decode()})
+        return jsonify({
+            "success": True,
+            "branded_image": base64.b64encode(out.getvalue()).decode()
+        })
+
     except Exception as e:
         return jsonify({"success": False, "error": str(e)}), 500
 
