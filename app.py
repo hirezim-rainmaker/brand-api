@@ -370,6 +370,20 @@ def template_endpoint():
 
         result = apply_template(base, raw, heading, features, cfg)
 
+        # Optional logo placement — only runs if logo_url is provided
+        logo_url = data.get('logo_url')
+        if logo_url:
+            result_rgba = result.convert("RGBA")
+            logo = remove_black_bg(download_image(logo_url))
+            img_w, img_h = result_rgba.size
+            logo_w = int(data.get('logo_width', int(img_w * 0.20)))
+            logo_h = int(logo.height * (logo_w / logo.width))
+            logo = logo.resize((logo_w, logo_h), Image.LANCZOS)
+            pos_x = int(data.get('logo_x', 20))
+            pos_y = int(data.get('logo_y', 20))
+            result_rgba.paste(logo, (pos_x, pos_y), logo)
+            result = result_rgba.convert("RGB")
+
         out = io.BytesIO()
         result.save(out, format="JPEG", quality=95)
         return jsonify({
